@@ -45,6 +45,17 @@ def _hparams(algorithm, dataset, random_seed):
         _hparam('mlp_depth', 3, lambda r: int(r.choice([3, 4, 5])))
         _hparam('mlp_dropout', 0., lambda r: r.choice([0., 0.1, 0.5]))
 
+    elif algorithm == "STN":
+        # number of random augmentations to apply
+        _hparam('aug_n', 2, lambda r: 2)
+        # magnitude of random augmentations [0, 30]
+        _hparam('aug_m', 9, lambda r: 9)
+        # [none, pixel, geometry, all]
+        _hparam('aug_set', 'pixel', lambda r: 'pixel')
+        _hparam('src_stn_weight', 0.7, lambda r: 0.7)
+        _hparam('src_randaug_weight', 0.7, lambda r: 0.7)
+        _hparam('affine_weight', 10.0, lambda r: 10.0)
+
     elif algorithm == "RSC":
         _hparam('rsc_f_drop_factor', 1/3, lambda r: r.uniform(0, 0.5))
         _hparam('rsc_b_drop_factor', 1/3, lambda r: r.uniform(0, 0.5))

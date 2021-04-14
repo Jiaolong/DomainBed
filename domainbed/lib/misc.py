@@ -12,8 +12,49 @@ from shutil import copyfile
 
 import numpy as np
 import torch
+import torch.nn as nn
 import tqdm
 from collections import Counter
+from torch.autograd import Function
+import collections
+from collections import OrderedDict
+
+def to_device(input, device):
+    if torch.is_tensor(input):
+        return input.to(device=torch.device(device))
+    elif isinstance(input, str):
+        return input
+    elif isinstance(input, collections.Mapping):
+        return {k: to_device(sample, device=device) for k, sample in input.items()}
+    elif isinstance(input, collections.Sequence):
+        return [to_device(sample, device=device) for sample in input]
+    else:
+        raise TypeError("Input must contain tensor, dict or list, found {type(input)}")
+
+def init_weights(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv2d') != -1 or classname.find('ConvTranspose2d') != -1:
+        nn.init.kaiming_uniform_(m.weight)
+        nn.init.zeros_(m.bias)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight, 1.0, 0.02)
+        nn.init.zeros_(m.bias)
+    elif classname.find('Linear') != -1:
+        nn.init.xavier_normal_(m.weight)
+        nn.init.zeros_(m.bias)
+
+class ReverseLayerF(Function):
+    @staticmethod
+    def forward(ctx, x, lambda_val):
+        ctx.lambda_val = lambda_val
+
+        return x.view_as(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        output = grad_output.neg() * ctx.lambda_val
+
+        return output, None
 
 def make_weights_for_balanced_classes(dataset):
     counts = Counter()
@@ -112,9 +153,9 @@ def accuracy(network, loader, weights, device):
 
     network.eval()
     with torch.no_grad():
-        for x, y in loader:
-            x = x.to(device)
-            y = y.to(device)
+        for batch in loader:
+            x = batch['images'].to(device)
+            y = batch['class_labels'].to(device)
             p = network.predict(x)
             if weights is None:
                 batch_weights = torch.ones(len(x))

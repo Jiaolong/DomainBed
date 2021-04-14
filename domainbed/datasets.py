@@ -9,8 +9,9 @@ from torch.utils.data import TensorDataset, Subset
 from torchvision.datasets import MNIST, ImageFolder
 from torchvision.transforms.functional import rotate
 
-from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
-from wilds.datasets.fmow_dataset import FMoWDataset
+from .rand_augment import RandAugment
+#from wilds.datasets.camelyon17_dataset import Camelyon17Dataset
+#from wilds.datasets.fmow_dataset import FMoWDataset
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -29,8 +30,8 @@ DATASETS = [
     "DomainNet",
     "SVIRO",
     # WILDS datasets
-    "WILDSCamelyon",
-    "WILDSFMoW"
+    #"WILDSCamelyon",
+    #"WILDSFMoW"
 ]
 
 def get_dataset_class(dataset_name):
@@ -80,6 +81,41 @@ class Debug224(Debug):
     INPUT_SHAPE = (3, 224, 224)
     ENVIRONMENTS = ['0', '1', '2']
 
+
+class ImageDataset(ImageFolder):
+    """
+    Image Dataset
+
+    Inputs:
+        rand_aug:
+            augN: number of augmentation types to apply
+            augM: magnitude of the aumentation
+            aug_set: available options [none, pixel, geometry, all]
+    """
+    def __init__(self, data_path, hparams, transform=None, is_test_env=False):
+        super(ImageDataset, self).__init__(root=data_path)
+        
+        self._image_transformer = transform
+        self._rand_augmenter = None
+        if not is_test_env and hparams.get('aug_set', None):
+            self._rand_augmenter = RandAugment(hparams)
+        
+    def __getitem__(self, index):
+        img_path, target = self.samples[index]
+
+        img = Image.open(img_path).convert('RGB')
+
+        # apply random augmentation
+        if self._rand_augmenter:
+            aug_img = self._rand_augmenter(img)
+
+            sample = {'images': self._image_transformer(img),
+                      'aug_images': self._image_transformer(aug_img),
+                      'class_labels': target}
+        else:
+            sample = {'images': self._image_transformer(img),
+                      'class_labels': target}
+        return sample
 
 class MultipleEnvironmentMNIST(MultipleDomainDataset):
     def __init__(self, root, environments, dataset_transform, input_shape,
@@ -202,14 +238,19 @@ class MultipleEnvironmentImageFolder(MultipleDomainDataset):
         self.datasets = []
         for i, environment in enumerate(environments):
 
-            if augment and (i not in test_envs):
+            is_test_env = False
+            if i in test_envs:
+                is_test_env = True
+
+            if augment and not is_test_env:
                 env_transform = augment_transform
             else:
                 env_transform = transform
 
+                
             path = os.path.join(root, environment)
-            env_dataset = ImageFolder(path,
-                transform=env_transform)
+            env_dataset = ImageDataset(path, hparams,
+                transform=env_transform, is_test_env=is_test_env)
 
             self.datasets.append(env_dataset)
 

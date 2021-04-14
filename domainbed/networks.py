@@ -1,13 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models
+import numpy as np
 
 from domainbed.lib import misc
 from domainbed.lib import wide_resnet
-
 
 def remove_batch_norm_from_resnet(model):
     fuse = torch.nn.utils.fusion.fuse_conv_bn_eval
@@ -211,3 +210,55 @@ def Classifier(in_features, out_features, is_nonlinear=False):
             torch.nn.Linear(in_features // 4, out_features))
     else:
         return torch.nn.Linear(in_features, out_features)
+
+class STN(nn.Module):
+    """
+    Spatial transformer network
+    """
+    def __init__(self, feat_net=None):
+        super(STN, self).__init__()
+        
+        self.feat_dim = feat_net.n_outputs
+        self.feat_net = feat_net
+
+        # affine transformation network
+        self.affine_net = nn.Sequential(
+                nn.Linear(self.feat_dim, 32),
+                nn.ReLU(True),
+                nn.Linear(32, 6),
+                #nn.Sigmoid()
+                nn.Tanh()
+                )
+
+        self.affine_net[0].apply(misc.init_weights)
+        self.affine_net[2].weight.data.zero_()
+        self.affine_net[2].bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float))
+
+        self.affine_loss_func = nn.MSELoss()
+
+    def forward(self, x, features=None, lambda_val=1.0): 
+    
+        if self.feat_net is not None:
+            features = self.feat_net(x)
+
+        xs = self.affine_net(features)
+        
+        xs = xs.view(-1, 2, 3)
+        trans = xs
+        affine_target = torch.from_numpy(np.array([[[1, 0, 0], [0, 1, 0]]] * x.size(0))).float().cuda()
+
+        affine_loss = self.affine_loss_func(xs, affine_target)
+
+        if int(torch.__version__[2]) >= 3:
+            affine_grid_points = F.affine_grid(trans, x.size(), align_corners=False)
+            y = F.grid_sample(x, affine_grid_points, align_corners=False)
+        else:
+            affine_grid_points = F.affine_grid(trans, x.size())
+            y = F.grid_sample(x, affine_grid_points)
+
+        # reverse gradients
+        y = misc.ReverseLayerF.apply(y, lambda_val)
+        return y, affine_loss
+
+    def get_parameters(self):
+        return self.affine_net.parameters()
